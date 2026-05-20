@@ -5,7 +5,7 @@ const app = express();
 
 let latestComment = "";
 
-const tiktokUsername = "edmark.jay121";
+const tiktokUsername = "insert_here_the_tiktokusername";
 
 const tiktokLiveConnection = new WebcastPushConnection(tiktokUsername);
 
