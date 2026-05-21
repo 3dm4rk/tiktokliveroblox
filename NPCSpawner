@@ -1,0 +1,237 @@
+local Players = game:GetService("Players")
+
+-- Configuration
+local WALK_SPEED = 8
+local ANIMATION_ID = "rbxassetid://507767714" -- Default Roblox run animation
+
+-- Path configuration
+local SPAWN_LOCATION = workspace:WaitForChild("SpawnLocation")
+local PATH_PART = workspace:WaitForChild("Part")
+local DESPAWN_DISTANCE = 5 -- How close to end before despawning
+
+-- Create a name tag above the NPC
+local function createNameTag(npc, displayName)
+	-- Remove any existing BillboardGuis (default health/name bars)
+	for _, child in npc:GetChildren() do
+		if child:IsA("BillboardGui") then
+			child:Destroy()
+		end
+	end
+
+	local head = npc:FindFirstChild("Head")
+	if not head then return end
+
+	-- Disable default health bar
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
+
+	local billboardGui = Instance.new("BillboardGui")
+	billboardGui.Name = "NameTag"
+	billboardGui.Adornee = head
+	billboardGui.Size = UDim2.new(0, 200, 0, 50)
+	billboardGui.StudsOffset = Vector3.new(0, 3, 0)
+	billboardGui.AlwaysOnTop = true
+	billboardGui.Parent = npc
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Name = "NameLabel"
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.Text = displayName
+	textLabel.TextColor3 = Color3.new(1, 1, 1)
+	textLabel.TextStrokeTransparency = 0
+	textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+	textLabel.TextScaled = true
+	textLabel.Font = Enum.Font.GothamBold
+	textLabel.Parent = billboardGui
+
+	return billboardGui
+end
+
+local function createNPC(username)
+	local success, userId = pcall(function()
+		return Players:GetUserIdFromNameAsync(username)
+	end)
+
+	if not success or not userId then
+		warn("Could not find user: " .. username)
+		return nil
+	end
+
+	local descSuccess, humanoidDescription = pcall(function()
+		return Players:GetHumanoidDescriptionFromUserId(userId)
+	end)
+
+	if not descSuccess or not humanoidDescription then
+		warn("Could not load appearance for: " .. username)
+		return nil
+	end
+
+	local npc = Players:CreateHumanoidModelFromDescription(humanoidDescription, Enum.HumanoidRigType.R15)
+	npc.Name = username .. "_NPC"
+
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = WALK_SPEED
+	end
+
+	local rootPart = npc:FindFirstChild("HumanoidRootPart")
+	if rootPart then
+		npc.PrimaryPart = rootPart
+	end
+
+	for _, part in npc:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+		end
+	end
+
+	-- Spawn at SpawnLocation
+	local spawnPosition = SPAWN_LOCATION.Position + Vector3.new(0, 5, 0)
+	if npc.PrimaryPart then
+		npc:SetPrimaryPartCFrame(CFrame.new(spawnPosition))
+	end
+
+	createNameTag(npc, username)
+
+	npc.Parent = workspace
+
+	-- Play animation AFTER parenting to workspace
+	task.wait(0.5)
+
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if not animator then
+			animator = Instance.new("Animator")
+			animator.Parent = humanoid
+		end
+
+		local animation = Instance.new("Animation")
+		animation.AnimationId = ANIMATION_ID
+		local track = animator:LoadAnimation(animation)
+		track.Priority = Enum.AnimationPriority.Action
+		track:Play()
+	end
+
+	return npc
+end
+
+-- Make NPC walk along the path to despawn point
+local function walkPath(npc)
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	-- Calculate the end of the path (where NPC will despawn)
+	local pathEnd = PATH_PART.Position + Vector3.new(0, 3, -PATH_PART.Size.Z / 2)
+
+	task.spawn(function()
+		while npc.Parent do
+			local rootPart = npc:FindFirstChild("HumanoidRootPart")
+			if not rootPart then break end
+
+			-- Check if NPC reached the end of the path
+			local distanceToEnd = (rootPart.Position - pathEnd).Magnitude
+			if distanceToEnd < DESPAWN_DISTANCE then
+				-- Despawn the NPC
+				for _, part in npc:GetDescendants() do
+					if part:IsA("BasePart") then
+						part.Anchored = true
+					end
+				end
+
+				-- Fade out
+				for i = 1, 10 do
+					if not npc.Parent then break end
+					for _, part in npc:GetDescendants() do
+						if part:IsA("BasePart") and part.Transparency < 1 then
+							part.Transparency = part.Transparency + 0.1
+						end
+					end
+					task.wait(0.05)
+				end
+
+				if npc.Parent then
+					npc:Destroy()
+				end
+				break
+			end
+
+			-- Move towards the end of the path
+			humanoid:MoveTo(pathEnd)
+			task.wait(0.5)
+		end
+	end)
+end
+
+local function onPlayerChatted(player, message)
+	local username = message:match("^%s*(.-)%s*$")
+
+	if not username or #username < 3 or #username > 20 then
+		return
+	end
+
+	local commonWords = {hi = true, hello = true, hey = true, yes = true, no = true, ok = true, lol = true, gg = true}
+	if commonWords[string.lower(username)] then
+		return
+	end
+
+	local npc = createNPC(username)
+	if not npc then return end
+
+	walkPath(npc)
+
+	print("Spawned NPC of: " .. username)
+end
+
+local function onPlayerAdded(player)
+	player.Chatted:Connect(function(message)
+		onPlayerChatted(player, message)
+	end)
+end
+
+local HttpService = game:GetService("HttpService")
+
+local LAST_COMMENT = ""
+
+task.spawn(function()
+	while true do
+		local success, response = pcall(function()
+			return HttpService:GetAsync("http://your_ip_here:3000/comment")
+		end)
+
+		if success then
+			local data = HttpService:JSONDecode(response)
+
+			if data.comment and data.comment ~= LAST_COMMENT then
+				LAST_COMMENT = data.comment
+
+				print("TikTok Comment:", data.comment)
+
+				local split = string.split(data.comment, ":")
+
+				local tiktokUser = split[1]
+				local robloxUsername = split[2]
+
+				if robloxUsername then
+					robloxUsername = robloxUsername:gsub("%s+", "")
+
+					local npc = createNPC(robloxUsername)
+
+					if npc then
+						walkPath(npc)
+						print("Spawned NPC from TikTok:", robloxUsername)
+					end
+				end
+			end
+		else
+			warn("Could not connect to TikTok server")
+		end
+
+		task.wait(1)
+	end
+end)
+
+print("TikTok NPC Spawner Loaded!")
